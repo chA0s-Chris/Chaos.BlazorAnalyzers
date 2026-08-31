@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore Chaos.BlazorAnalyzers.slnx
+
+      - name: Build
+        run: dotnet build -c Release --no-restore Chaos.BlazorAnalyzers.slnx
+
+      - name: Test
+        run: >
+          dotnet test -c Release --no-build Chaos.BlazorAnalyzers.slnx
+          --logger "junit;LogFilePath=${{ github.workspace }}/TestResults/test-results.xml"
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/
+          if-no-files-found: warn

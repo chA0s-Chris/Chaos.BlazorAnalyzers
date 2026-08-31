@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <ProjectReference Include="..\..\src\Chaos.BlazorAnalyzers\Chaos.BlazorAnalyzers.csproj" />
+  </ItemGroup>
+
+</Project>

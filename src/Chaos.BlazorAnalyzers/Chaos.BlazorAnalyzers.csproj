@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Description>Roslyn analyzers and diagnostic suppressors for Blazor. Suppresses false-positive nullability warnings for members the framework assigns, and reports Blazor-specific defects such as undisposed JS interop references.</Description>
+    <PackageTags>blazor;roslyn;analyzers;analyzer;diagnostics;suppressor;aspnetcore;codequality</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- An analyzer ships its assembly under analyzers/dotnet/cs, not lib: a package that puts it in
+       lib adds a useless compile-time reference and the analyzer is never loaded by the compiler. -->
+  <PropertyGroup>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(OutputPath)$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="$(OutputPath)$(AssemblyName).xml" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
