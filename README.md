@@ -16,19 +16,19 @@ The package is a development dependency: it contributes no runtime reference and
 
 All three suppress `CS8618` ("non-nullable member must contain a non-null value when exiting constructor") on types deriving from `ComponentBase`.
 
-| ID        | Suppressed when                                                    |
-|-----------|--------------------------------------------------------------------|
-| `KOS8001` | The member is assigned in `OnInitialized` or `OnInitializedAsync`. |
-| `KOS8002` | The member is a property marked `[Inject]`, so DI assigns it.      |
-| `KOS8003` | The member is captured by an `@ref`, so the renderer assigns it.   |
+| ID                                                                                                | Suppressed when                                                    |
+|---------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
+| [`KOS8001`](https://github.com/chA0s-Chris/Chaos.BlazorAnalyzers/blob/main/docs/rules/KOS8001.md) | The member is assigned in `OnInitialized` or `OnInitializedAsync`. |
+| [`KOS8002`](https://github.com/chA0s-Chris/Chaos.BlazorAnalyzers/blob/main/docs/rules/KOS8002.md) | The member is a property marked `[Inject]`, so DI assigns it.      |
+| [`KOS8003`](https://github.com/chA0s-Chris/Chaos.BlazorAnalyzers/blob/main/docs/rules/KOS8003.md) | The member is captured by an `@ref`, so the renderer assigns it.   |
 
 Members marked `[Parameter]` or `[CascadingParameter]` are deliberately **not** suppressed: the framework does not guarantee they are supplied.
 
 ## Analyzers
 
-| ID                                 | Severity | Description                                                                                   |
-|------------------------------------|----------|-----------------------------------------------------------------------------------------------|
-| [`KOS2001`](docs/rules/KOS2001.md) | Warning  | A component assigns an `IJSObjectReference` or `DotNetObjectReference` and never disposes it. |
+| ID                                                                                                | Severity | Description                                                                                   |
+|---------------------------------------------------------------------------------------------------|----------|-----------------------------------------------------------------------------------------------|
+| [`KOS2001`](https://github.com/chA0s-Chris/Chaos.BlazorAnalyzers/blob/main/docs/rules/KOS2001.md) | Warning  | A component assigns an `IJSObjectReference` or `DotNetObjectReference` and never disposes it. |
 
 ## Configuration
 
@@ -48,4 +48,4 @@ The analyzers target `netstandard2.0` and run in any Roslyn host. They only acti
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/chA0s-Chris/Chaos.BlazorAnalyzers/blob/main/LICENSE).
