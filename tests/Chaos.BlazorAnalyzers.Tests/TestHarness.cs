@@ -56,7 +56,7 @@ internal static class TestHarness
         Boolean markAsGenerated = false)
     {
         var compilation = CreateCompilation(source, withBlazorReferences, markAsGenerated: markAsGenerated);
-        var diagnostics = await compilation.WithAnalyzers([analyzer]).GetAnalyzerDiagnosticsAsync();
+        var diagnostics = await compilation.WithAnalyzers(ImmutableArray.Create(analyzer)).GetAnalyzerDiagnosticsAsync();
 
         return diagnostics.OrderBy(diagnostic => diagnostic.Location.SourceSpan.Start).ToImmutableArray();
     }
@@ -75,7 +75,7 @@ internal static class TestHarness
         Boolean withBlazorReferences = true)
     {
         var compilation = CreateCompilation(source, withBlazorReferences, disabledSuppressionId);
-        var diagnostics = await compilation.WithAnalyzers([new BlazorLifecycleNullabilitySuppressor()])
+        var diagnostics = await compilation.WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(new BlazorLifecycleNullabilitySuppressor()))
                                            .GetAllDiagnosticsAsync();
 
         return diagnostics.Where(diagnostic => diagnostic.Id == "CS8618")

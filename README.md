@@ -44,7 +44,7 @@ dotnet_diagnostic.KOS2001.severity = error
 
 ## Requirements
 
-The analyzers target `netstandard2.0` and run in any Roslyn host. They only activate in compilations that reference ASP.NET Core Blazor; in any other project they report nothing.
+The analyzers target `netstandard2.0` and require **Roslyn 4.8 or newer** — the .NET 8 SDK, Visual Studio 2022 17.8, or later. They only activate in compilations that reference ASP.NET Core Blazor; in any other project they report nothing.
 
 ## License
 
