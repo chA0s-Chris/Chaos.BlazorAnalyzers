@@ -7,7 +7,9 @@
     <PackageVersion Include="FluentAssertions" Version="[7.2.2]" />
     <PackageVersion Include="JUnitTestLogger" Version="1.1.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.9.0" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+    <!-- Pinned to the OLDEST supported Roslyn, not the newest: a host running an older compiler
+         refuses to load an analyzer built against a newer one (CS9057). 4.8.0 is the .NET 8 SDK. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.400" />
     <PackageVersion Include="Microsoft.TestPlatform.TestHost" Version="18.9.0" />

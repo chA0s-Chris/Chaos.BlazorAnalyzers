@@ -52,7 +52,7 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
     /// and <c>KOS8003</c> covers members captured by an <c>@ref</c>. All suppress <c>CS8618</c>.
     /// </summary>
     public override ImmutableArray<SuppressionDescriptor> SupportedSuppressions =>
-        [SuppressCs8618InBlazorLifecycle, SuppressCs8618ForInjectedMember, SuppressCs8618ForReferenceCapture];
+        ImmutableArray.Create(SuppressCs8618InBlazorLifecycle, SuppressCs8618ForInjectedMember, SuppressCs8618ForReferenceCapture);
 
     /// <summary>
     /// Reports a suppression for every <c>CS8618</c> diagnostic whose member is declared on a type

@@ -19,12 +19,10 @@ public sealed class JsInteropDisposalAnalyzer : DiagnosticAnalyzer
 
     private const String DotNetObjectReferenceTypeName = "Microsoft.JSInterop.DotNetObjectReference`1";
 
-    private static readonly ImmutableArray<String> FrameworkAssignedAttributes =
-    [
+    private static readonly ImmutableArray<String> FrameworkAssignedAttributes = ImmutableArray.Create(
         "Microsoft.AspNetCore.Components.InjectAttribute",
         "Microsoft.AspNetCore.Components.ParameterAttribute",
-        "Microsoft.AspNetCore.Components.CascadingParameterAttribute"
-    ];
+        "Microsoft.AspNetCore.Components.CascadingParameterAttribute");
 
     private const String JsObjectReferenceTypeName = "Microsoft.JSInterop.IJSObjectReference";
 
@@ -32,7 +30,7 @@ public sealed class JsInteropDisposalAnalyzer : DiagnosticAnalyzer
     /// Gets the diagnostics this analyzer can report.
     /// </summary>
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-        [DiagnosticDescriptors.UndisposedJsInteropReference];
+        ImmutableArray.Create(DiagnosticDescriptors.UndisposedJsInteropReference);
 
     /// <summary>
     /// Registers the analysis callbacks.
