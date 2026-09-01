@@ -62,3 +62,9 @@ nunit-*.xml
 .idea
 
 /tmp/
+
+# Strong-name key, provided by CI
+*.snk
+
+# Local reproductions of the CI release commands
+TestResults/

@@ -1,0 +1,202 @@
+name: NuGet Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic version to release (e.g. 1.2.3 or 1.2.3-dev)'
+        required: true
+        default: '0.1.0'
+      publish:
+        description: 'Publish the package to nuget.org'
+        required: true
+        type: boolean
+        default: false
+      create_release:
+        description: 'Publish a GitHub release (only when the package is published)'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+  PACKAGE_OUTPUT: ${{ github.workspace }}/artifacts/packages
+  SIGNING_KEY_FILE: ${{ github.workspace }}/Chaos.BlazorAnalyzers.snk
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate version
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: ./scripts/release-version.sh
+
+  pack:
+    name: Test and pack signed NuGet package
+    runs-on: ubuntu-latest
+    needs: validate
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: ${{ runner.os }}-nuget-${{ hashFiles('global.json', 'Directory.Packages.props', 'Directory.Build.props', 'src/Directory.Build.props', 'tests/Directory.Build.props', '**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Decode signing key
+        env:
+          SIGNING_KEY_SNK: ${{ secrets.SIGNING_KEY_SNK }}
+        run: printf '%s' "$SIGNING_KEY_SNK" | base64 --decode > "${{ env.SIGNING_KEY_FILE }}"
+
+      - name: Restore
+        run: dotnet restore Chaos.BlazorAnalyzers.slnx /p:ContinuousIntegrationBuild=true
+
+      - name: Build
+        run: >
+          dotnet build Chaos.BlazorAnalyzers.slnx
+          --configuration Release
+          --no-restore
+          /p:SignAssembly=true
+          /p:AssemblyOriginatorKeyFile=${{ env.SIGNING_KEY_FILE }}
+          /p:ContinuousIntegrationBuild=true
+          /p:Version=${{ needs.validate.outputs.version }}
+
+      # The package is published from this build, so the tests gate the release rather than only
+      # the CI workflow on main.
+      - name: Test
+        run: >
+          dotnet test Chaos.BlazorAnalyzers.slnx
+          --configuration Release
+          --no-build
+          --logger "junit;LogFilePath=${{ github.workspace }}/TestResults/test-results.xml"
+
+      # IncludeSymbols is deliberately not set: IncludeBuildOutput is false for an analyzer, so a
+      # symbol package would have no content and pack fails with NU5017.
+      - name: Pack
+        run: >
+          dotnet pack Chaos.BlazorAnalyzers.slnx
+          --configuration Release
+          --no-build
+          --output "${{ env.PACKAGE_OUTPUT }}"
+          /p:ContinuousIntegrationBuild=true
+          /p:PackageRequireLicenseAcceptance=false
+          /p:Version=${{ needs.validate.outputs.version }}
+
+      - name: Verify package layout
+        run: ./scripts/verify-packages.sh "${{ env.PACKAGE_OUTPUT }}"
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: nuget-packages
+          path: ${{ env.PACKAGE_OUTPUT }}
+          if-no-files-found: error
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-test-results
+          path: TestResults/
+          if-no-files-found: warn
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f "${{ env.SIGNING_KEY_FILE }}"
+
+  publish:
+    name: Publish NuGet package
+    runs-on: ubuntu-latest
+    needs: [ validate, pack ]
+    if: ${{ inputs.publish }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: nuget-packages
+          path: artifacts/packages
+
+      - name: NuGet login
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push package
+        run: >
+          dotnet nuget push artifacts/packages/*.nupkg
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs: [ validate, publish ]
+    if: ${{ inputs.publish && inputs.create_release }}
+
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - name: Publish GitHub release
+        uses: release-drafter/release-drafter@v7
+        with:
+          config-name: release-drafter.yml
+          version: ${{ needs.validate.outputs.version }}
+          name: v${{ needs.validate.outputs.version }}
+          tag: v${{ needs.validate.outputs.version }}
+          publish: true
+          prerelease: ${{ needs.validate.outputs.prerelease }}
+          latest: ${{ needs.validate.outputs.prerelease == 'false' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
