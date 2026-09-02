@@ -7,6 +7,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using System.Collections.Immutable;
+using System.Globalization;
 
 /// <summary>
 /// Suppresses CS8618 warnings for non-nullable members of Blazor components that the framework
@@ -115,6 +116,86 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         return false;
     }
 
+    private static Boolean ContainsInvocationOf(SyntaxNode scope, String name)
+    {
+        foreach (var invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (GetInvokedMethodName(invocation) == name)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ArgumentSyntax? FindLambdaArgumentAssigning(InvocationExpressionSyntax invocation, String memberName)
+    {
+        foreach (var argument in invocation.ArgumentList.Arguments)
+        {
+            if (argument.Expression is LambdaExpressionSyntax lambda &&
+                ContainsAssignmentTo(lambda, memberName))
+            {
+                return argument;
+            }
+        }
+
+        return null;
+    }
+
+    /// <remarks>
+    /// A generic component whose type argument is inferred does not get its reference capture
+    /// inline. Razor routes the render call through a generated <c>TypeInference.Create*</c> helper
+    /// and passes the capture on as an <c>Action&lt;T&gt;</c> parameter; the helper is what calls
+    /// <c>AddComponentReferenceCapture</c>, invoking that parameter from inside the capture lambda.
+    /// One level of indirection is enough, because that is all the generator emits.
+    /// </remarks>
+    private static Boolean ForwardsArgumentToReferenceCapture(
+        SuppressionAnalysisContext context,
+        InvocationExpressionSyntax invocation,
+        ArgumentSyntax argument)
+    {
+        var semanticModel = context.GetSemanticModel(invocation.SyntaxTree);
+        if (semanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol is not IMethodSymbol method)
+        {
+            return false;
+        }
+
+        var parameterName = GetParameterName(invocation, argument, method);
+        if (parameterName is null)
+        {
+            return false;
+        }
+
+        foreach (var reference in method.OriginalDefinition.DeclaringSyntaxReferences)
+        {
+            if (reference.GetSyntax(context.CancellationToken) is not MethodDeclarationSyntax declaration)
+            {
+                continue;
+            }
+
+            foreach (var candidate in declaration.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                var candidateName = GetInvokedMethodName(candidate);
+                if (candidateName is null || !ReferenceCaptureMethods.Contains(candidateName))
+                {
+                    continue;
+                }
+
+                foreach (var captureArgument in candidate.ArgumentList.Arguments)
+                {
+                    if (captureArgument.Expression is LambdaExpressionSyntax lambda &&
+                        ContainsInvocationOf(lambda, parameterName))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static String? GetInvokedMethodName(InvocationExpressionSyntax invocation)
     {
         return invocation.Expression switch
@@ -140,6 +221,57 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         };
     }
 
+    /// <remarks>
+    /// The member name is verified against the type before it is used, so a compiler that reworded
+    /// CS8618 ends in no suppression rather than in the wrong one. The invariant culture pins the
+    /// message to the neutral resource, which a localized compiler host would otherwise replace.
+    /// </remarks>
+    private static String? GetMemberNameFromMessage(Diagnostic diagnostic, INamedTypeSymbol typeSymbol)
+    {
+        var message = diagnostic.GetMessage(CultureInfo.InvariantCulture);
+
+        var start = message.IndexOf('\'');
+        if (start < 0)
+        {
+            return null;
+        }
+
+        var end = message.IndexOf('\'', start + 1);
+        if (end < 0)
+        {
+            return null;
+        }
+
+        var memberName = message.Substring(start + 1, end - start - 1);
+
+        foreach (var member in typeSymbol.GetMembers(memberName))
+        {
+            if (member is IPropertySymbol or IFieldSymbol)
+            {
+                return memberName;
+            }
+        }
+
+        return null;
+    }
+
+    private static String? GetParameterName(
+        InvocationExpressionSyntax invocation,
+        ArgumentSyntax argument,
+        IMethodSymbol method)
+    {
+        if (argument.NameColon is not null)
+        {
+            return argument.NameColon.Name.Identifier.Text;
+        }
+
+        var index = invocation.ArgumentList.Arguments.IndexOf(argument);
+
+        return index >= 0 && index < method.Parameters.Length
+            ? method.Parameters[index].Name
+            : null;
+    }
+
     private static SuppressionDescriptor? GetSuppression(
         SuppressionAnalysisContext context,
         Diagnostic diagnostic,
@@ -154,13 +286,6 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
 
         var root = syntaxTree.GetRoot(context.CancellationToken);
         var node = root.FindNode(diagnostic.Location.SourceSpan);
-
-        // Find the member (property or field) that has the warning
-        var memberName = GetMemberName(node);
-        if (memberName is null)
-        {
-            return null;
-        }
 
         // Find the containing type
         var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
@@ -177,8 +302,17 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
             return null;
         }
 
+        // Find the member (property or field) that has the warning. The compiler anchors CS8618 at
+        // the member, unless the type declares a constructor: then it anchors every member's
+        // diagnostic at that constructor instead and only the message still names the member.
+        var memberName = GetMemberName(node) ?? GetMemberNameFromMessage(diagnostic, typeSymbol);
+        if (memberName is null)
+        {
+            return null;
+        }
+
         // [Inject] is only valid on properties, so a field never reaches this suppression
-        if (IsInjectedProperty(semanticModel, node, injectAttributeType, context.CancellationToken))
+        if (IsInjectedMember(typeSymbol, memberName, injectAttributeType))
         {
             return SuppressCs8618ForInjectedMember;
         }
@@ -187,7 +321,7 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         // generator emits BuildRenderTree into yet another part, so every part has to be scanned.
         var declarations = GetTypeDeclarations(typeSymbol, context.CancellationToken);
 
-        if (IsMemberCapturedByReference(declarations, memberName))
+        if (IsMemberCapturedByReference(context, declarations, memberName))
         {
             return SuppressCs8618ForReferenceCapture;
         }
@@ -233,34 +367,26 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         return false;
     }
 
-    private static Boolean IsInjectedProperty(
-        SemanticModel semanticModel,
-        SyntaxNode node,
-        INamedTypeSymbol? injectAttributeType,
-        CancellationToken cancellationToken)
+    private static Boolean IsInjectedMember(
+        INamedTypeSymbol typeSymbol,
+        String memberName,
+        INamedTypeSymbol? injectAttributeType)
     {
         if (injectAttributeType is null)
         {
             return false;
         }
 
-        var propertyDeclaration = node.FirstAncestorOrSelf<PropertyDeclarationSyntax>();
-        if (propertyDeclaration is null)
+        // Looked up on the type rather than on the diagnostic's syntax, because a
+        // constructor-anchored diagnostic points at no member declaration at all.
+        foreach (var member in typeSymbol.GetMembers(memberName))
         {
-            return false;
-        }
-
-        var propertySymbol = semanticModel.GetDeclaredSymbol(propertyDeclaration, cancellationToken);
-        if (propertySymbol is null)
-        {
-            return false;
-        }
-
-        foreach (var attribute in propertySymbol.GetAttributes())
-        {
-            if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, injectAttributeType))
+            foreach (var attribute in member.GetAttributes())
             {
-                return true;
+                if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, injectAttributeType))
+                {
+                    return true;
+                }
             }
         }
 
@@ -296,6 +422,7 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
     }
 
     private static Boolean IsMemberCapturedByReference(
+        SuppressionAnalysisContext context,
         ImmutableArray<TypeDeclarationSyntax> declarations,
         String memberName)
     {
@@ -303,19 +430,21 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         {
             foreach (var invocation in declaration.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
-                var methodName = GetInvokedMethodName(invocation);
-                if (methodName is null || !ReferenceCaptureMethods.Contains(methodName))
+                var argument = FindLambdaArgumentAssigning(invocation, memberName);
+                if (argument is null)
                 {
                     continue;
                 }
 
-                foreach (var argument in invocation.ArgumentList.Arguments)
+                var methodName = GetInvokedMethodName(invocation);
+                if (methodName is not null && ReferenceCaptureMethods.Contains(methodName))
                 {
-                    if (argument.Expression is LambdaExpressionSyntax lambda &&
-                        ContainsAssignmentTo(lambda, memberName))
-                    {
-                        return true;
-                    }
+                    return true;
+                }
+
+                if (ForwardsArgumentToReferenceCapture(context, invocation, argument))
+                {
+                    return true;
                 }
             }
         }
