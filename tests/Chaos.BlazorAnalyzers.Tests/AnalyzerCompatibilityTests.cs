@@ -11,9 +11,10 @@ public class AnalyzerCompatibilityTests
     /// <summary>
     /// The oldest Roslyn the analyzer supports. Referencing a newer compiler than the host is
     /// running makes the host refuse to load the analyzer with CS9057, so this is the floor, not
-    /// the newest version available. 4.8 corresponds to the .NET 8 SDK and Visual Studio 17.8.
+    /// the newest version available. 3.11 is the highest version the ReSharper and Rider
+    /// inspection engine loads, which is the binding constraint rather than any .NET SDK.
     /// </summary>
-    private static readonly Version SupportedCompilerFloor = new(4, 8, 0, 0);
+    private static readonly Version SupportedCompilerFloor = new(3, 11, 0, 0);
 
     [Test]
     public void AnalyzerAssembly_DoesNotReferenceACompilerNewerThanTheSupportedFloor()
