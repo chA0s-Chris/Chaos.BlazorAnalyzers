@@ -77,7 +77,7 @@ public class BlazorLifecycleNullabilitySuppressorTests
     public async Task Cs8618_IsSuppressed_ForComponentInheritingFromIntermediateBase()
     {
         const String source = """
-                              public abstract class IntermediateBase : ComponentBase;
+                              public abstract class IntermediateBase : ComponentBase { }
 
                               public class Component : IntermediateBase
                               {

@@ -22,7 +22,7 @@ internal static class TestHarness
                                           using System;
                                           using System.Threading.Tasks;
 
-                                          public interface ITestService;
+                                          public interface ITestService { }
 
 
                                           """;
@@ -58,7 +58,9 @@ internal static class TestHarness
         var compilation = CreateCompilation(source, withBlazorReferences, markAsGenerated: markAsGenerated);
         var diagnostics = await compilation.WithAnalyzers(ImmutableArray.Create(analyzer)).GetAnalyzerDiagnosticsAsync();
 
-        return diagnostics.OrderBy(diagnostic => diagnostic.Location.SourceSpan.Start).ToImmutableArray();
+        return diagnostics.Where(diagnostic => !diagnostic.IsSuppressed)
+                          .OrderBy(diagnostic => diagnostic.Location.SourceSpan.Start)
+                          .ToImmutableArray();
     }
 
     /// <summary>
@@ -78,7 +80,9 @@ internal static class TestHarness
         var diagnostics = await compilation.WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(new BlazorLifecycleNullabilitySuppressor()))
                                            .GetAllDiagnosticsAsync();
 
-        return diagnostics.Where(diagnostic => diagnostic.Id == "CS8618")
+        // Roslyn 3.x returns suppressed diagnostics flagged rather than removing them, so the
+        // filter is explicit instead of relying on the host to drop them.
+        return diagnostics.Where(diagnostic => diagnostic.Id == "CS8618" && !diagnostic.IsSuppressed)
                           .OrderBy(diagnostic => diagnostic.Location.SourceSpan.Start)
                           .ToImmutableArray();
     }
