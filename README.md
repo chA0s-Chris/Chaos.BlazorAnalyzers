@@ -24,6 +24,8 @@ All three suppress `CS8618` ("non-nullable member must contain a non-null value 
 
 Members marked `[Parameter]` or `[CascadingParameter]` are deliberately **not** suppressed: the framework does not guarantee they are supplied.
 
+All three work whether or not the component declares a constructor. A component that declares one makes the compiler report every member's `CS8618` against the constructor rather than against the member, and each rule resolves the member it belongs to.
+
 ## Analyzers
 
 | ID                                                                                                | Severity | Description                                                                                   |

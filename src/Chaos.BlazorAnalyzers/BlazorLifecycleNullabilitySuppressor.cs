@@ -7,6 +7,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using System.Collections.Immutable;
+using System.Globalization;
 
 /// <summary>
 /// Suppresses CS8618 warnings for non-nullable members of Blazor components that the framework
@@ -140,6 +141,40 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         };
     }
 
+    /// <remarks>
+    /// The member name is verified against the type before it is used, so a compiler that reworded
+    /// CS8618 ends in no suppression rather than in the wrong one. The invariant culture pins the
+    /// message to the neutral resource, which a localized compiler host would otherwise replace.
+    /// </remarks>
+    private static String? GetMemberNameFromMessage(Diagnostic diagnostic, INamedTypeSymbol typeSymbol)
+    {
+        var message = diagnostic.GetMessage(CultureInfo.InvariantCulture);
+
+        var start = message.IndexOf('\'');
+        if (start < 0)
+        {
+            return null;
+        }
+
+        var end = message.IndexOf('\'', start + 1);
+        if (end < 0)
+        {
+            return null;
+        }
+
+        var memberName = message.Substring(start + 1, end - start - 1);
+
+        foreach (var member in typeSymbol.GetMembers(memberName))
+        {
+            if (member is IPropertySymbol or IFieldSymbol)
+            {
+                return memberName;
+            }
+        }
+
+        return null;
+    }
+
     private static SuppressionDescriptor? GetSuppression(
         SuppressionAnalysisContext context,
         Diagnostic diagnostic,
@@ -154,13 +189,6 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
 
         var root = syntaxTree.GetRoot(context.CancellationToken);
         var node = root.FindNode(diagnostic.Location.SourceSpan);
-
-        // Find the member (property or field) that has the warning
-        var memberName = GetMemberName(node);
-        if (memberName is null)
-        {
-            return null;
-        }
 
         // Find the containing type
         var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
@@ -177,8 +205,17 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
             return null;
         }
 
+        // Find the member (property or field) that has the warning. The compiler anchors CS8618 at
+        // the member, unless the type declares a constructor: then it anchors every member's
+        // diagnostic at that constructor instead and only the message still names the member.
+        var memberName = GetMemberName(node) ?? GetMemberNameFromMessage(diagnostic, typeSymbol);
+        if (memberName is null)
+        {
+            return null;
+        }
+
         // [Inject] is only valid on properties, so a field never reaches this suppression
-        if (IsInjectedProperty(semanticModel, node, injectAttributeType, context.CancellationToken))
+        if (IsInjectedMember(typeSymbol, memberName, injectAttributeType))
         {
             return SuppressCs8618ForInjectedMember;
         }
@@ -233,34 +270,26 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         return false;
     }
 
-    private static Boolean IsInjectedProperty(
-        SemanticModel semanticModel,
-        SyntaxNode node,
-        INamedTypeSymbol? injectAttributeType,
-        CancellationToken cancellationToken)
+    private static Boolean IsInjectedMember(
+        INamedTypeSymbol typeSymbol,
+        String memberName,
+        INamedTypeSymbol? injectAttributeType)
     {
         if (injectAttributeType is null)
         {
             return false;
         }
 
-        var propertyDeclaration = node.FirstAncestorOrSelf<PropertyDeclarationSyntax>();
-        if (propertyDeclaration is null)
+        // Looked up on the type rather than on the diagnostic's syntax, because a
+        // constructor-anchored diagnostic points at no member declaration at all.
+        foreach (var member in typeSymbol.GetMembers(memberName))
         {
-            return false;
-        }
-
-        var propertySymbol = semanticModel.GetDeclaredSymbol(propertyDeclaration, cancellationToken);
-        if (propertySymbol is null)
-        {
-            return false;
-        }
-
-        foreach (var attribute in propertySymbol.GetAttributes())
-        {
-            if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, injectAttributeType))
+            foreach (var attribute in member.GetAttributes())
             {
-                return true;
+                if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, injectAttributeType))
+                {
+                    return true;
+                }
             }
         }
 

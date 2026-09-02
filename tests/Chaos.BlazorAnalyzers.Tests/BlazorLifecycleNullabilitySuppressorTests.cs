@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Christian Flessa.All rights reserved.
+// Copyright (c) 2026 Christian Flessa. All rights reserved.
 // This file is licensed under the MIT license.See LICENSE in the project root for more information.
 namespace Chaos.BlazorAnalyzers.Tests;
 
@@ -251,6 +251,117 @@ public class BlazorLifecycleNullabilitySuppressorTests
 
         diagnostics.Should().ContainSingle();
         TestHarness.GetMemberName(diagnostics[0]).Should().Be("_captured");
+    }
+
+    /// <remarks>
+    /// A type that declares a constructor moves every CS8618 from the member to the constructor,
+    /// so the suppressor cannot read the member off the diagnostic's syntax.
+    /// </remarks>
+    [TestCase("[Inject] public ITestService Member { get; set; }", TestName = "Inject attribute")]
+    [TestCase("public string Member { get; set; }\nprotected override void OnInitialized() => Member = \"x\";", TestName = "Assigned in OnInitialized")]
+    [TestCase("private string Member;\nprotected override void OnInitialized() => Member = \"x\";", TestName = "Field assigned in OnInitialized")]
+    public async Task Cs8618_IsSuppressed_ForComponentWithExplicitConstructor(String memberDeclaration)
+    {
+        var source = $$"""
+                       public class Component : ComponentBase
+                       {
+                           public Component() { }
+
+                           {{memberDeclaration}}
+                       }
+                       """;
+
+        var diagnostics = await TestHarness.GetCs8618DiagnosticsAsync(source);
+
+        diagnostics.Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task Cs8618_IsSuppressed_ForComponentWithSeveralConstructors()
+    {
+        const String source = """
+                              public class Component : ComponentBase
+                              {
+                                  public Component() { }
+
+                                  public Component(int value) => Value = value;
+
+                                  public int Value { get; }
+
+                                  [Inject] public ITestService Injected { get; set; }
+                              }
+                              """;
+
+        var diagnostics = await TestHarness.GetCs8618DiagnosticsAsync(source);
+
+        diagnostics.Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task Cs8618_IsSuppressed_ForReferenceCaptureInComponentWithExplicitConstructor()
+    {
+        const String source = """
+                              public partial class Component : ComponentBase
+                              {
+                                  public Component() { }
+
+                                  private ITestService _captured;
+                              }
+
+                              public partial class Component
+                              {
+                                  protected override void BuildRenderTree(RenderTreeBuilder __builder)
+                                  {
+                                      __builder.AddComponentReferenceCapture(1, (__value) => { _captured = (ITestService)__value; });
+                                  }
+                              }
+                              """;
+
+        var diagnostics = await TestHarness.GetCs8618DiagnosticsAsync(source);
+
+        diagnostics.Should().BeEmpty();
+    }
+
+    /// <remarks>
+    /// Every diagnostic of a constructor-anchored type shares one location, so the uncovered member
+    /// has to be told apart from the covered ones rather than the whole type being suppressed.
+    /// </remarks>
+    [Test]
+    public async Task Cs8618_IsReported_ForUncoveredMemberOfComponentWithExplicitConstructor()
+    {
+        const String source = """
+                              public class Component : ComponentBase
+                              {
+                                  public Component() { }
+
+                                  [Inject] public ITestService Injected { get; set; }
+
+                                  public string Forgotten { get; set; }
+                              }
+                              """;
+
+        var diagnostics = await TestHarness.GetCs8618DiagnosticsAsync(source);
+
+        diagnostics.Should().ContainSingle();
+        TestHarness.GetMemberName(diagnostics[0]).Should().Be("Forgotten");
+    }
+
+    [Test]
+    public async Task Cs8618_IsReported_ForInjectAttributeOutsideComponentWithExplicitConstructor()
+    {
+        const String source = """
+                              public class NotAComponent
+                              {
+                                  public NotAComponent() { }
+
+                                  [Inject] public ITestService Injected { get; set; }
+                              }
+                              """;
+
+        var diagnostics = await TestHarness.GetCs8618DiagnosticsAsync(source);
+
+        diagnostics.Should().ContainSingle();
+        TestHarness.GetMemberName(diagnostics[0]).Should().Be("Injected");
     }
 
     /// <remarks>
