@@ -36,6 +36,32 @@ public class BlazorLifecycleNullabilitySuppressorTests
                                                      }
                                                      """;
 
+    // Mirrors what the Razor source generator emits for <Child @ref="_captured" /> when Child is
+    // generic and its type argument is inferred: the render call goes through a TypeInference
+    // helper, and only the helper calls AddComponentReferenceCapture.
+    private const String TypeInferenceCaptureComponent = """
+                                                         public partial class Component : ComponentBase
+                                                         {
+                                                             private ITestService _captured;
+                                                         }
+
+                                                         public partial class Component
+                                                         {
+                                                             protected override void BuildRenderTree(RenderTreeBuilder __builder)
+                                                             {
+                                                                 TypeInference.CreateChild_0(__builder, 0, 1, (__value) => { _captured = (ITestService)__value; });
+                                                             }
+                                                         }
+
+                                                         internal static class TypeInference
+                                                         {
+                                                             public static void CreateChild_0(RenderTreeBuilder __builder, int seq, int __seq0, Action<ITestService> __arg0)
+                                                             {
+                                                                 __builder.AddComponentReferenceCapture(__seq0, (__value) => { __arg0((ITestService)__value); });
+                                                             }
+                                                         }
+                                                         """;
+
     [Test]
     public void SupportedSuppressions_DeclaresAllRulesForCs8618()
     {
@@ -362,6 +388,92 @@ public class BlazorLifecycleNullabilitySuppressorTests
 
         diagnostics.Should().ContainSingle();
         TestHarness.GetMemberName(diagnostics[0]).Should().Be("Injected");
+    }
+
+    [Test]
+    public async Task Cs8618_IsSuppressed_ForCaptureRoutedThroughTypeInference()
+    {
+        var diagnostics = await TestHarness.GetCs8618DiagnosticsAsync(TypeInferenceCaptureComponent);
+
+        diagnostics.Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task DisablingKos8003_ReportsTheMemberCapturedThroughTypeInference()
+    {
+        var diagnostics = await TestHarness.GetCs8618DiagnosticsAsync(
+            TypeInferenceCaptureComponent,
+            "KOS8003");
+
+        diagnostics.Select(TestHarness.GetMemberName).Should().BeEquivalentTo("_captured");
+    }
+
+    [Test]
+    public async Task Cs8618_IsReported_WhenTheHelperDoesNotCaptureAReference()
+    {
+        const String source = """
+                              public partial class Component : ComponentBase
+                              {
+                                  private ITestService _captured;
+                              }
+
+                              public partial class Component
+                              {
+                                  protected override void BuildRenderTree(RenderTreeBuilder __builder)
+                                  {
+                                      TypeInference.CreateChild_0(__builder, 1, (__value) => { _captured = (ITestService)__value; });
+                                  }
+                              }
+
+                              internal static class TypeInference
+                              {
+                                  public static void CreateChild_0(RenderTreeBuilder __builder, int __seq0, Action<ITestService> __arg0)
+                                  {
+                                      __builder.AddContent(__seq0, "text");
+                                  }
+                              }
+                              """;
+
+        var diagnostics = await TestHarness.GetCs8618DiagnosticsAsync(source);
+
+        diagnostics.Should().ContainSingle();
+        TestHarness.GetMemberName(diagnostics[0]).Should().Be("_captured");
+    }
+
+    /// <remarks>
+    /// The forwarded argument has to be matched to the parameter the helper actually captures, not
+    /// merely to the presence of a capture somewhere in the helper.
+    /// </remarks>
+    [Test]
+    public async Task Cs8618_IsReported_WhenTheHelperCapturesAnotherParameter()
+    {
+        const String source = """
+                              public partial class Component : ComponentBase
+                              {
+                                  private ITestService _captured;
+                              }
+
+                              public partial class Component
+                              {
+                                  protected override void BuildRenderTree(RenderTreeBuilder __builder)
+                                  {
+                                      TypeInference.CreateChild_0(__builder, 1, (__value) => { _captured = (ITestService)__value; }, __other => { });
+                                  }
+                              }
+
+                              internal static class TypeInference
+                              {
+                                  public static void CreateChild_0(RenderTreeBuilder __builder, int __seq0, Action<ITestService> __arg0, Action<ITestService> __arg1)
+                                  {
+                                      __builder.AddComponentReferenceCapture(__seq0, (__value) => { __arg1((ITestService)__value); });
+                                  }
+                              }
+                              """;
+
+        var diagnostics = await TestHarness.GetCs8618DiagnosticsAsync(source);
+
+        diagnostics.Should().ContainSingle();
+        TestHarness.GetMemberName(diagnostics[0]).Should().Be("_captured");
     }
 
     /// <remarks>

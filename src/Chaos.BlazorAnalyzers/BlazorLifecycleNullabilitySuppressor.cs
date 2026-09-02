@@ -116,6 +116,86 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         return false;
     }
 
+    private static Boolean ContainsInvocationOf(SyntaxNode scope, String name)
+    {
+        foreach (var invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (GetInvokedMethodName(invocation) == name)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ArgumentSyntax? FindLambdaArgumentAssigning(InvocationExpressionSyntax invocation, String memberName)
+    {
+        foreach (var argument in invocation.ArgumentList.Arguments)
+        {
+            if (argument.Expression is LambdaExpressionSyntax lambda &&
+                ContainsAssignmentTo(lambda, memberName))
+            {
+                return argument;
+            }
+        }
+
+        return null;
+    }
+
+    /// <remarks>
+    /// A generic component whose type argument is inferred does not get its reference capture
+    /// inline. Razor routes the render call through a generated <c>TypeInference.Create*</c> helper
+    /// and passes the capture on as an <c>Action&lt;T&gt;</c> parameter; the helper is what calls
+    /// <c>AddComponentReferenceCapture</c>, invoking that parameter from inside the capture lambda.
+    /// One level of indirection is enough, because that is all the generator emits.
+    /// </remarks>
+    private static Boolean ForwardsArgumentToReferenceCapture(
+        SuppressionAnalysisContext context,
+        InvocationExpressionSyntax invocation,
+        ArgumentSyntax argument)
+    {
+        var semanticModel = context.GetSemanticModel(invocation.SyntaxTree);
+        if (semanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol is not IMethodSymbol method)
+        {
+            return false;
+        }
+
+        var parameterName = GetParameterName(invocation, argument, method);
+        if (parameterName is null)
+        {
+            return false;
+        }
+
+        foreach (var reference in method.OriginalDefinition.DeclaringSyntaxReferences)
+        {
+            if (reference.GetSyntax(context.CancellationToken) is not MethodDeclarationSyntax declaration)
+            {
+                continue;
+            }
+
+            foreach (var candidate in declaration.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                var candidateName = GetInvokedMethodName(candidate);
+                if (candidateName is null || !ReferenceCaptureMethods.Contains(candidateName))
+                {
+                    continue;
+                }
+
+                foreach (var captureArgument in candidate.ArgumentList.Arguments)
+                {
+                    if (captureArgument.Expression is LambdaExpressionSyntax lambda &&
+                        ContainsInvocationOf(lambda, parameterName))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static String? GetInvokedMethodName(InvocationExpressionSyntax invocation)
     {
         return invocation.Expression switch
@@ -175,6 +255,23 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         return null;
     }
 
+    private static String? GetParameterName(
+        InvocationExpressionSyntax invocation,
+        ArgumentSyntax argument,
+        IMethodSymbol method)
+    {
+        if (argument.NameColon is not null)
+        {
+            return argument.NameColon.Name.Identifier.Text;
+        }
+
+        var index = invocation.ArgumentList.Arguments.IndexOf(argument);
+
+        return index >= 0 && index < method.Parameters.Length
+            ? method.Parameters[index].Name
+            : null;
+    }
+
     private static SuppressionDescriptor? GetSuppression(
         SuppressionAnalysisContext context,
         Diagnostic diagnostic,
@@ -224,7 +321,7 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         // generator emits BuildRenderTree into yet another part, so every part has to be scanned.
         var declarations = GetTypeDeclarations(typeSymbol, context.CancellationToken);
 
-        if (IsMemberCapturedByReference(declarations, memberName))
+        if (IsMemberCapturedByReference(context, declarations, memberName))
         {
             return SuppressCs8618ForReferenceCapture;
         }
@@ -325,6 +422,7 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
     }
 
     private static Boolean IsMemberCapturedByReference(
+        SuppressionAnalysisContext context,
         ImmutableArray<TypeDeclarationSyntax> declarations,
         String memberName)
     {
@@ -332,19 +430,21 @@ public sealed class BlazorLifecycleNullabilitySuppressor : DiagnosticSuppressor
         {
             foreach (var invocation in declaration.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
-                var methodName = GetInvokedMethodName(invocation);
-                if (methodName is null || !ReferenceCaptureMethods.Contains(methodName))
+                var argument = FindLambdaArgumentAssigning(invocation, memberName);
+                if (argument is null)
                 {
                     continue;
                 }
 
-                foreach (var argument in invocation.ArgumentList.Arguments)
+                var methodName = GetInvokedMethodName(invocation);
+                if (methodName is not null && ReferenceCaptureMethods.Contains(methodName))
                 {
-                    if (argument.Expression is LambdaExpressionSyntax lambda &&
-                        ContainsAssignmentTo(lambda, memberName))
-                    {
-                        return true;
-                    }
+                    return true;
+                }
+
+                if (ForwardsArgumentToReferenceCapture(context, invocation, argument))
+                {
+                    return true;
                 }
             }
         }
